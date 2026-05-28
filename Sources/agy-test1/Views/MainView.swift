@@ -117,6 +117,18 @@ struct MainView: View {
         // Only intercept key presses if neither list has direct keyboard focus
         guard focusedPane == nil else { return .ignored }
         
+        // Command+C and Command+V take precedence
+        if press.modifiers == .command {
+            if press.characters.lowercased() == "c" {
+                activeModel.copyToPasteboard()
+                return .handled
+            }
+            if press.characters.lowercased() == "v" {
+                activeModel.pasteFromPasteboard()
+                return .handled
+            }
+        }
+        
         let models = isDualPane ? [modelLeft, modelRight] : [modelLeft]
         let isAnyFiltering = models.contains { $0.isFilterActive }
         

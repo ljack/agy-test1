@@ -7,7 +7,21 @@ import AppKit
 public final class FileManagerModel: Sendable {
     public private(set) var currentDirectory: URL
     public private(set) var files: [FileItem] = []
-    public var selectedItem: FileItem? = nil
+    public var selectedItems: Set<URL> = []
+    
+    public var selectedItem: FileItem? {
+        get {
+            guard let firstURL = selectedItems.first else { return nil }
+            return files.first(where: { $0.url == firstURL }) ?? FileItem(url: firstURL)
+        }
+        set {
+            if let newValue = newValue {
+                selectedItems = [newValue.url]
+            } else {
+                selectedItems = []
+            }
+        }
+    }
     public private(set) var recentDirectories: [URL] = []
     public private(set) var favoriteDirectories: [FileItem] = []
     
@@ -245,6 +259,67 @@ public final class FileManagerModel: Sendable {
     public func openInOtherPane(_ item: FileItem) {
         guard item.isDirectory else { return }
         onOpenInOtherPane?(item.url)
+    }
+    
+    // Clipboard Operations
+    
+    public func copyToPasteboard() {
+        guard !selectedItems.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let urls = Array(selectedItems).map { $0 as NSURL }
+        pasteboard.writeObjects(urls)
+    }
+    
+    public func pasteFromPasteboard() {
+        let pasteboard = NSPasteboard.general
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else { return }
+        
+        let targetDir = currentDirectory
+        
+        Task.detached(priority: .userInitiated) {
+            let fileManager = FileManager.default
+            for srcURL in urls {
+                var destURL = targetDir.appendingPathComponent(srcURL.lastPathComponent)
+                
+                // Handle name collisions (Finder style: copy, copy 2)
+                destURL = self.getUniqueDestinationURL(for: destURL)
+                
+                do {
+                    try fileManager.copyItem(at: srcURL, to: destURL)
+                } catch {
+                    print("Failed to copy \(srcURL.path) to \(destURL.path): \(error)")
+                }
+            }
+            
+            await MainActor.run {
+                self.reload()
+            }
+        }
+    }
+    
+    nonisolated private func getUniqueDestinationURL(for url: URL) -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return url }
+        
+        let directory = url.deletingLastPathComponent()
+        let filename = url.deletingPathExtension().lastPathComponent
+        let fileExtension = url.pathExtension
+        
+        var counter = 1
+        var uniqueURL = url
+        
+        while fileManager.fileExists(atPath: uniqueURL.path) {
+            let suffix = counter == 1 ? " copy" : " copy \(counter)"
+            var newFilename = "\(filename)\(suffix)"
+            if !fileExtension.isEmpty {
+                newFilename += ".\(fileExtension)"
+            }
+            uniqueURL = directory.appendingPathComponent(newFilename)
+            counter += 1
+        }
+        
+        return uniqueURL
     }
     
     // Favorites Management

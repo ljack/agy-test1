@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ExplorerPane: View {
-    var model: FileManagerModel
+    @Bindable var model: FileManagerModel
     var isFocused: FocusState<MainView.FocusablePane?>.Binding
     let paneType: MainView.FocusablePane
     
@@ -134,15 +134,14 @@ struct ExplorerPane: View {
             let files = model.filteredAndSortedFiles
             ZStack(alignment: .bottomTrailing) {
                 ScrollViewReader { proxy in
-                    List(files) { item in
-                        ExplorerRow(item: item, isSelected: model.selectedItem?.url == item.url, currentDirectory: model.currentDirectory)
+                    let fileList = List(files, selection: $model.selectedItems) { item in
+                        ExplorerRow(item: item, isSelected: model.selectedItems.contains(item.url), currentDirectory: model.currentDirectory)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 let now = Date()
                                 if lastClickedItemURL == item.url && now.timeIntervalSince(lastClickTime) < 0.25 {
                                     model.openItem(item)
                                 } else {
-                                    model.selectedItem = item
                                     isFocused.wrappedValue = paneType
                                 }
                                 lastClickTime = now
@@ -157,6 +156,14 @@ struct ExplorerPane: View {
                                         model.openInOtherPane(item)
                                     }
                                 }
+                                Divider()
+                                Button("Copy") {
+                                    model.copyToPasteboard()
+                                }
+                                Button("Paste") {
+                                    model.pasteFromPasteboard()
+                                }
+                                Divider()
                                 Button("Reveal in Finder") {
                                     model.revealInFinder(item)
                                 }
@@ -174,17 +181,24 @@ struct ExplorerPane: View {
                                 }
                             }
                     }
-                    .listStyle(.inset)
-                    .focusable()
-                    .focused(isFocused, equals: paneType)
-                    .onKeyPress { press in
-                        handleKeyPress(press, files: files)
-                    }
-                    .onChange(of: model.selectedItem) { _, newValue in
-                        if let selected = newValue, !files.isEmpty {
-                            proxy.scrollTo(selected.id)
+                    
+                    fileList
+                        .listStyle(.inset)
+                        .focusable()
+                        .focused(isFocused, equals: paneType)
+                        .onKeyPress { press in
+                            handleKeyPress(press, files: files)
                         }
-                    }
+                        .onChange(of: model.selectedItem) { _, newValue in
+                            if let selected = newValue, !files.isEmpty {
+                                proxy.scrollTo(selected.id)
+                            }
+                        }
+                        .contextMenu {
+                            Button("Paste") {
+                                model.pasteFromPasteboard()
+                            }
+                        }
                     .overlay {
                         if files.isEmpty {
                             VStack {
@@ -282,6 +296,18 @@ struct ExplorerPane: View {
     }
     
     private func handleKeyPress(_ press: KeyPress, files: [FileItem]) -> KeyPress.Result {
+        // Command+C and Command+V take global precedence
+        if press.modifiers == .command {
+            if press.characters.lowercased() == "c" {
+                model.copyToPasteboard()
+                return .handled
+            }
+            if press.characters.lowercased() == "v" {
+                model.pasteFromPasteboard()
+                return .handled
+            }
+        }
+        
         if model.isFilterActive {
             // 1. Handle Escape to clear and close filter
             if press.key == .escape {
@@ -401,6 +427,12 @@ struct ExplorerPane: View {
                         return .handled
                     }
                     return .ignored
+                case "y":
+                    model.copyToPasteboard()
+                    return .handled
+                case "p":
+                    model.pasteFromPasteboard()
+                    return .handled
                 default:
                     break
                 }
