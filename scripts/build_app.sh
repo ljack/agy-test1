@@ -23,9 +23,15 @@ fi
 echo "=== 2. Creating macOS App Bundle structure ==="
 rm -rf "$BUILD_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
 
 echo "=== 3. Copying executable and writing Info.plist ==="
 cp "$EXECUTABLE_SRC" "$APP_DIR/Contents/MacOS/AgyFinder"
+
+if [ -f "$WORKSPACE_DIR/Resources/AppIcon.icns" ]; then
+    cp "$WORKSPACE_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+    echo "Bundled AppIcon.icns"
+fi
 
 # Get current git tag or fallback to v1.0.0
 VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
@@ -39,6 +45,8 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
 <dict>
     <key>CFBundleExecutable</key>
     <string>AgyFinder</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.ljack.agy-finder</string>
     <key>CFBundleName</key>
