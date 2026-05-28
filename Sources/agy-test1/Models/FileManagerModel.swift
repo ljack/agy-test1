@@ -12,6 +12,17 @@ public final class FileManagerModel: Sendable {
     public private(set) var favoriteDirectories: [FileItem] = []
     
     public var searchQuery: String = ""
+    public var filterText: String = "" {
+        didSet {
+            performFilteringAndDeepSearch()
+        }
+    }
+    public private(set) var deepSearchResults: [FileItem] = []
+    public private(set) var isDeepSearching: Bool = false
+    public var isFilterActive: Bool = false
+    public var onOpenInOtherPane: (@MainActor @Sendable (URL) -> Void)? = nil
+    private var deepSearchTask: Task<Void, Never>? = nil
+    
     public var showHiddenFiles: Bool = false {
         didSet { reload() }
     }
@@ -102,6 +113,15 @@ public final class FileManagerModel: Sendable {
             result = result.filter { $0.name.localizedCaseInsensitiveContains(searchQuery) }
         }
         
+        if !filterText.isEmpty {
+            let localFiltered = result.filter { $0.name.localizedCaseInsensitiveContains(filterText) }
+            if localFiltered.isEmpty {
+                result = deepSearchResults
+            } else {
+                result = localFiltered
+            }
+        }
+        
         result.sort { (item1, item2) -> Bool in
             // Folders always go first
             if item1.isDirectory != item2.isDirectory {
@@ -139,6 +159,8 @@ public final class FileManagerModel: Sendable {
         
         currentDirectory = target
         selectedItem = nil
+        filterText = ""
+        isFilterActive = false
         reload()
         setupWatcher()
     }
@@ -148,6 +170,8 @@ public final class FileManagerModel: Sendable {
         forwardHistory.append(currentDirectory)
         currentDirectory = previous
         selectedItem = nil
+        filterText = ""
+        isFilterActive = false
         reload()
         setupWatcher()
     }
@@ -157,6 +181,8 @@ public final class FileManagerModel: Sendable {
         backHistory.append(currentDirectory)
         currentDirectory = next
         selectedItem = nil
+        filterText = ""
+        isFilterActive = false
         reload()
         setupWatcher()
     }
@@ -216,6 +242,11 @@ public final class FileManagerModel: Sendable {
         }
     }
     
+    public func openInOtherPane(_ item: FileItem) {
+        guard item.isDirectory else { return }
+        onOpenInOtherPane?(item.url)
+    }
+    
     // Favorites Management
     
     public func addToFavorites(_ item: FileItem) {
@@ -250,5 +281,65 @@ public final class FileManagerModel: Sendable {
         self.favoriteDirectories = paths.map { path in
             FileItem(url: URL(fileURLWithPath: path))
         }
+    }
+    
+    private func performFilteringAndDeepSearch() {
+        deepSearchTask?.cancel()
+        deepSearchTask = nil
+        deepSearchResults = []
+        isDeepSearching = false
+        
+        guard !filterText.isEmpty else { return }
+        
+        // 1. Check if there are any local matches
+        let localMatches = files.filter { $0.name.localizedCaseInsensitiveContains(filterText) }
+        
+        // 2. If no local matches, initiate deep search fallback
+        if localMatches.isEmpty {
+            isDeepSearching = true
+            let query = filterText
+            let searchDir = currentDirectory
+            
+            deepSearchTask = Task {
+                let results = await performRecursiveScan(in: searchDir, query: query)
+                guard !Task.isCancelled else { return }
+                
+                self.deepSearchResults = results
+                self.isDeepSearching = false
+            }
+        }
+    }
+    
+    private func performRecursiveScan(in directory: URL, query: String) async -> [FileItem] {
+        await Task.detached(priority: .userInitiated) { () -> [FileItem] in
+            let fileManager = FileManager.default
+            var matches: [FileItem] = []
+            let maxResults = 100
+            
+            let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+            guard let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                errorHandler: { _, _ in true }
+            ) else {
+                return []
+            }
+            
+            while let fileURL = enumerator.nextObject() as? URL {
+                if Task.isCancelled { break }
+                if matches.count >= maxResults { break }
+                
+                guard fileURL != directory else { continue }
+                
+                let name = fileURL.lastPathComponent
+                if name.localizedCaseInsensitiveContains(query) {
+                    let item = FileItem(url: fileURL)
+                    matches.append(item)
+                }
+            }
+            
+            return matches
+        }.value
     }
 }

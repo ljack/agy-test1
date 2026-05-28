@@ -127,55 +127,140 @@ struct MetadataRow: View {
 
 struct FileThumbnailView: View {
     let item: FileItem
+    @State private var loadedImage: NSImage? = nil
+    @State private var isLoading: Bool = false
     
     var body: some View {
-        if !item.isDirectory,
-           let nsImage = NSImage(contentsOf: item.url),
-           let _ = nsImage.representations.first {
-            Image(nsImage: nsImage)
-                .resizable()
-                .scaledToFit()
-                .cornerRadius(8)
-                .shadow(radius: 4)
-        } else {
-            Image(systemName: item.iconName)
-                .resizable()
-                .scaledToFit()
-                .foregroundColor(item.isDirectory ? .accentColor : .secondary)
-                .frame(width: 80, height: 80)
+        Group {
+            if let nsImage = loadedImage {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .cornerRadius(8)
+                    .shadow(radius: 4)
+            } else if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 80, height: 80)
+            } else {
+                Image(systemName: item.iconName)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundColor(item.isDirectory ? .accentColor : .secondary)
+                    .frame(width: 80, height: 80)
+            }
+        }
+        .task(id: item.url) {
+            guard !item.isDirectory else {
+                loadedImage = nil
+                isLoading = false
+                return
+            }
+            
+            // Fast path: check file extension before doing disk I/O
+            let ext = item.fileExtension.lowercased()
+            let imageExtensions = ["png", "jpg", "jpeg", "gif", "tiff", "bmp", "heic", "webp"]
+            guard imageExtensions.contains(ext) else {
+                loadedImage = nil
+                isLoading = false
+                return
+            }
+            
+            isLoading = true
+            let url = item.url
+            let image = await Task.detached(priority: .userInitiated) { () -> NSImage? in
+                guard let img = NSImage(contentsOf: url) else { return nil }
+                // Decompress the image data on the background thread
+                _ = img.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                return img
+            }.value
+            
+            if item.url == url {
+                loadedImage = image
+                isLoading = false
+            }
         }
     }
 }
 
 struct ContentPreviewView: View {
     let item: FileItem
+    @State private var textPreview: String? = nil
+    @State private var isLoading: Bool = false
     
     var body: some View {
-        if item.isDirectory {
-            VStack {
-                Text("Directory Contents")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
+        Group {
+            if item.isDirectory {
+                VStack {
+                    Text("Directory Contents")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else if isTextFile(item) {
+                if let text = textPreview {
+                    ScrollView {
+                        Text(text)
+                            .font(.system(.caption2, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.leading)
+                            .padding(8)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .cornerRadius(4)
+                            .textSelection(.enabled)
+                    }
+                } else if isLoading {
+                    VStack {
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Spacer()
+                    }
+                } else {
+                    VStack {
+                        Spacer()
+                        Text("Preparing preview...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                }
+            } else {
+                VStack {
+                    Spacer()
+                    Text("No preview available")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
             }
-        } else if isTextFile(item) {
-            ScrollView {
-                Text(readTextPreview(url: item.url))
-                    .font(.system(.caption2, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .multilineTextAlignment(.leading)
-                    .padding(8)
-                    .background(Color(NSColor.textBackgroundColor))
-                    .cornerRadius(4)
-                    .textSelection(.enabled)
+        }
+        .task(id: item.url) {
+            guard !item.isDirectory && isTextFile(item) else {
+                textPreview = nil
+                isLoading = false
+                return
             }
-        } else {
-            VStack {
-                Spacer()
-                Text("No preview available")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
+            
+            isLoading = true
+            let url = item.url
+            let text = await Task.detached(priority: .userInitiated) { () -> String in
+                do {
+                    let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                    let previewSize = min(data.count, 8 * 1024) // 8KB
+                    let subdata = data.subdata(in: 0..<previewSize)
+                    if let str = String(data: subdata, encoding: .utf8) {
+                        return str
+                    }
+                    return "Binary file or unsupported encoding"
+                } catch {
+                    return "Error loading preview: \(error.localizedDescription)"
+                }
+            }.value
+            
+            if item.url == url {
+                textPreview = text
+                isLoading = false
             }
         }
     }
@@ -184,19 +269,5 @@ struct ContentPreviewView: View {
         let ext = item.fileExtension.lowercased()
         let textExtensions = ["txt", "md", "swift", "py", "js", "ts", "json", "yaml", "yml", "xml", "csv", "sh", "c", "cpp", "h", "go", "rs", "gitignore", "log"]
         return textExtensions.contains(ext)
-    }
-    
-    private func readTextPreview(url: URL) -> String {
-        do {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            let previewSize = min(data.count, 8 * 1024) // 8KB
-            let subdata = data.subdata(in: 0..<previewSize)
-            if let text = String(data: subdata, encoding: .utf8) {
-                return text
-            }
-            return "Binary file or unsupported encoding"
-        } catch {
-            return "Error loading preview: \(error.localizedDescription)"
-        }
     }
 }
