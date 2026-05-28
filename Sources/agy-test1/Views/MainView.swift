@@ -13,6 +13,10 @@ struct MainView: View {
     enum FocusablePane: Hashable, Sendable {
         case leftList
         case rightList
+        case leftPath
+        case rightPath
+        case leftSearch
+        case rightSearch
     }
     
     @FocusState private var focusedPane: FocusablePane?

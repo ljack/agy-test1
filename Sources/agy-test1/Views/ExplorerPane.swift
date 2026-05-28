@@ -9,6 +9,14 @@ struct ExplorerPane: View {
     @State private var lastClickTime: Date = Date.distantPast
     @State private var lastClickedItemURL: URL? = nil
     
+    private var pathFocusKey: MainView.FocusablePane {
+        paneType == .leftList ? .leftPath : .rightPath
+    }
+    
+    private var searchFocusKey: MainView.FocusablePane {
+        paneType == .leftList ? .leftSearch : .rightSearch
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar Area
@@ -45,6 +53,7 @@ struct ExplorerPane: View {
                         pathInput = model.currentDirectory.path
                     }
                 })
+                .focused(isFocused, equals: pathFocusKey)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
                 .font(.system(.body, design: .monospaced))
@@ -87,6 +96,7 @@ struct ExplorerPane: View {
                     get: { model.searchQuery },
                     set: { model.searchQuery = $0 }
                 ))
+                .focused(isFocused, equals: searchFocusKey)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 150)
                 .transition(.move(edge: .trailing))
