@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/logo.png" width="160" height="160" alt="Agy Finder Logo">
+</p>
+
 # Agy Finder 🚀
 
 Agy Finder is a lightweight, keyboard-first, and developer-centric macOS Finder replacement and enhancement built natively in **Swift** and **SwiftUI**. 
